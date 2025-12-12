@@ -1,4 +1,5 @@
 open Gfile
+open Tools
     
 let () =
 
@@ -28,8 +29,12 @@ let () =
   (* Open file *)
   let graph = from_file infile in
 
+  (* récupérer graph et faire les tests des fonctions ici *)
+  let new_graph = gmap graph (fun x -> x*4) in
+
   (* Rewrite the graph that has been read. *)
-  let () = write_file outfile graph in
+  let () = write_file outfile new_graph in
 
   ()
+
 
