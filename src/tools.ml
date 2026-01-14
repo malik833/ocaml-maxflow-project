@@ -1,5 +1,6 @@
 open Graph 
 
+(* FONCTIONS AUXILIAIRES *)
 let clone_nodes (gr: 'a graph) = n_fold gr new_node empty_graph 
 
 let gmap (gr: 'a graph) f = 
@@ -13,6 +14,35 @@ let add_arc (gr: 'a graph) id1 id2 n =
             | Some arc ->  new_arc gr {arc with lbl = n + arc.lbl} 
     else gr
 
+(* Fonctions de conversions d'arc en string *)
+let string_of_arc arc = "{"^ string_of_int arc.src ^"->"^ string_of_int arc.tgt ^" : "^ string_of_int arc.lbl ^"}"
+
+(* Fonctions de conversions d'une liste d'arcs en string *)
+let string_of_list_of_arcs l = 
+        let rec aux l acc = 
+            match l with 
+                | [] -> acc ^ "]"
+                | [arc] -> acc ^ (string_of_arc arc) ^ "]"
+                | arc :: rest -> aux rest (acc ^ (string_of_arc arc) ^ "; ")
+        in
+            aux l "["
+
+(* Fonctions de conversions d'une liste de sommets en string *)
+let string_of_list_of_nodes l = 
+    let rec aux l acc = 
+        match l with 
+            | [] -> acc ^ "]"
+            | [id] -> acc ^ (string_of_int id) ^ "]"
+            | id :: rest -> aux rest (acc ^ (string_of_int id) ^ "; ")
+    in
+        aux l "["
+
+(* Fonction pour transformer un label (flot,capacity) en string*)
+let string_of_flow_capacity (f,c) = (string_of_int f)^"/"^(string_of_int c)
+
+
+(*****************************************************************************)
+(* FONCTIONS BRIQUES DE L'ALGORITHME FORD-FULKERSON *)
 
 (* trouver la capacité (label) min d'une liste d'arcs : retourne la capacité min trouvée *)
 let find_min_lbl l = 
@@ -24,6 +54,7 @@ let find_min_lbl l =
   
 (* appliquer les changements de flots au graphe résiduel : retourne le nouveau graphe modifié -> utiliser gmap*)
 let apply_changes gr_res edges_path = 
+    Printf.printf "Applying changes" ;
     let min_lbl = find_min_lbl edges_path in
         (* fonction auxiliaire : pour tous les arcs de edge_path, ajouter un arc de tgt vers src avec min_lbl et ajouter un arc de src vers tgt avec lbl-min_lbl (en parcourant edge_path ?) *)
         let g new_gr_res arc = 
@@ -34,89 +65,177 @@ let apply_changes gr_res edges_path =
         in
             e_fold gr_res g gr_res 
 
-let rec find_edge_path gr path acc = 
-    match path with 
-        | None -> []
-        | Some path ->
-            match path with 
-                | _ :: [] | []  -> acc
-                | id1 :: id2 :: rest -> match (find_arc gr id1 id2) with 
-                                        | Some arc -> find_edge_path gr (Some (id2 :: rest)) (arc :: acc)
-                                        | None -> [] 
-let string_of_arc arc = "{"^ string_of_int arc.src ^"->"^ string_of_int arc.tgt ^" : "^ string_of_int arc.lbl ^"}"
-let string_of_list_of_arcs l = 
-        let rec aux l acc = 
-            match l with 
-                | [] -> acc ^ "]"
-                | [arc] -> acc ^ (string_of_arc arc) ^ "]"
-                | arc :: rest -> aux rest (acc ^ (string_of_arc arc) ^ "; ")
-        in
-            aux l "["
-
-let string_of_list_of_nodes l = 
-    let rec aux l acc = 
-        match l with 
-            | [] -> acc ^ "]"
-            | [id] -> acc ^ (string_of_int id) ^ "]"
-            | id :: rest -> aux rest (acc ^ (string_of_int id) ^ "; ")
+(* Trouver la liste d'arcs correspondant à un chemin de sommets *)
+let find_edge_path gr path =
+    let rec aux gr path acc = 
+        match path with 
+            | None -> []
+            | Some path ->
+                match path with 
+                    | _ :: [] | []  -> acc
+                    | id1 :: id2 :: rest -> match (find_arc gr id1 id2) with 
+                                            | Some arc -> aux gr (Some (id2 :: rest)) (arc :: acc)
+                                            | None -> [] 
     in
-        aux l "["
+        aux gr path [] 
 
-(*type path = id list*)
+(* Fonction qui recherche les sommets voisins du sommet en entrée*)
 let list_of_neighbors gr id = 
     match (out_arcs gr id) with 
         | [] -> []
-        | arcs -> List.map (fun arc -> arc.tgt) arcs
+        | arcs -> List.filter_map (fun arc -> if arc.lbl > 0 then Some arc.tgt else None) arcs
 
+
+(* Fonction de recherche d'un chemin dans le graphe résiduel*)
 let rec find_path gr forbidden id1 id2 = 
-    if List.mem id2 forbidden then None
-    else match (find_arc gr id1 id2 ) with 
-       | Some _ -> Some [id1;id2]
+    Printf.printf "Forbidden : %s" (string_of_list_of_nodes forbidden) ;
+    if List.mem id1 forbidden then None
+    else 
+        let find_arc_ff gr id1 id2 = 
+            match (find_arc gr id1 id2 ) with 
+                | Some arc -> if arc.lbl > 0 then Some arc else None
+                | None -> None 
+        in 
+       match (find_arc_ff gr id1 id2 ) with 
+       | Some arc -> if arc.lbl > 0 then Some [id1;id2] else None
        | None -> let neighbors = list_of_neighbors gr id1 in
+                    Printf.printf "Exploring neighbors of %d: %s\n" id1 (string_of_list_of_nodes neighbors);
                     let rec aux = function 
                         | [] -> None
-                        | neighbor :: rest -> match (find_path gr (id1 :: forbidden) neighbor id2) with 
-                                                | Some path -> Some (id1 :: path)
-                                                | None -> aux rest
+                        | neighbor :: rest -> 
+                            Printf.printf "\tTrying neighbor %d from %d to %d\n" neighbor id1 id2;
+                            match (find_path gr (id1 :: forbidden) neighbor id2) with 
+                                                | Some path -> 
+                                                    Printf.printf "\t\tPath found from %d to %d via %d: %s\n" id1 id2 neighbor (string_of_list_of_nodes path);
+                                                    Some (id1 :: path)
+                                                | None ->
+                                                    Printf.printf "\t\t\tNo path found from %d to %d\n" neighbor id2;
+                                                    Printf.printf "\t\t\tTrying rest of neighbors\n";
+                                                    Printf.printf "\t\t\tRest of neighbors: %s\n" (string_of_list_of_nodes rest);
+                                                    Printf.printf "\t\t\tNeighbors: %s\n" (string_of_list_of_nodes neighbors);
+                                                    Printf.printf "\t\t\tForbidden: %s\n" (string_of_list_of_nodes (id1 :: forbidden));
+                                                    aux rest
                     in
                         aux neighbors
 
 
-let algo gr_originel = apply_changes (gr_originel) (find_edge_path gr_originel (find_path gr_originel [] 0 3) [])
 
 
-(*let find_path (gr: 'a graph) s t = 
-(* algo qui permet de trouver un chemin vers le puit et qui doit renvoyer la liste des arcs empruntés*-> ne pas repasser vers les mêmes noeuds avec un mem*)
+                    
+(*****************************************************************************)
 
-    (* renvoie None si l'arc ne va pas au puit et some arc si oui*)
-    let is_t_here edge = edge.tgt = t && edge.lbl != 0 in
+(* FONCTIONS SUPPLEMENTAIRES : CALCULS DE COUPE ST *)
 
-    (* algo récursif qui renvoie un arc en option comportant un chemin vers t sinon None*)
-    let find_t out_edges = (List.find_opt (is_t_here) out_edges)
-        (* match (List.find_opt (is_t_here) out_edges) with*)
-        (* match (List.fold_left is_t_here None out_edges) with *)        
+(* Fonction de calcul de la somme des capacités d'une liste d'arcs*)
+let rec sum acc = function
+    | [] -> acc
+    | arc :: rest -> sum (acc + arc.lbl) rest
+
+(* Fonction qui vérifie que le puit d'un graphe a ou non des arcs sortants *)
+let weird_sink gr id_sink = 
+    match (out_arcs gr id_sink) with 
+        | [] ->  None
+        | arcs -> Some (sum 0 arcs)
+
+(* Fonction qui réalise la st coupe et renvoie les sommets accessibles depuis la source *)
+let st_coupe gr id_source = 
+    let rec explore gr visited to_visit = 
+        match to_visit with 
+            | [] -> visited
+            | id :: rest -> 
+                if List.mem id visited then
+                    explore gr visited rest
+                else
+                    let neighbors = list_of_neighbors gr id in
+                    let new_to_visit = rest @ neighbors in
+                    explore gr (id :: visited) new_to_visit
+    in
+        explore gr [] [id_source]
+        
+(* Fonction qui calcule la somme des capacité d'une liste d'arc pour la S-T coupe (ne prend pas en compte les arc allant vers S)*)
+let rec sum_coupe acc s = function
+    | [] -> acc
+    | arc :: rest -> if List.mem arc.tgt s then sum_coupe acc s rest else sum_coupe (acc + arc.lbl) s rest
+
+(* Fonction qui donne la valeur de la capacité d'une coupe S-T*)
+let rec coupe_min gr s visited acc = 
+    match s with 
+        | [] -> acc 
+        | id :: rest -> 
+            let out_arcs = out_arcs gr id in
+            coupe_min gr rest (id :: visited) (sum_coupe acc (s @ visited) out_arcs)
+
+(* Fonction qui retourne une liste de tous les sommets qui ne sont pas dans la liste d'entrée*) 
+let t_coupe gr s = n_fold gr (fun acc node -> if List.mem node s then acc else (node :: acc)) []
+
+
+
+(*****************************************************************************)
+
+(* FONCTIONS DE TRANSFORMATION DE GRAPHE *)
+
+type flow_capacity = id * id 
+
+(** Fonction qui donne la capacité d'un arc entre deux sommets, si elle existe et si elle est positive *)
+let capacity gr id1 id2 = 
+    match (find_arc gr id1 id2) with 
+        | None -> None
+        | Some arc -> if arc.lbl > 0 then Some arc.lbl else None
+
+(*Fonction our transformer un graphe à double sens à un graphe au capacités en forme f(u,v)/c(u,v)*) 
+let to_flow_form gr_initial final_graph =  
+    let new_graph = clone_nodes gr_initial in
+    let aux new_gr node = 
+        let rec transform new_gr node out_arcs = 
+            Printf.printf "\nOut arcs of node %d: %s\n" node (string_of_list_of_arcs out_arcs);
+            match out_arcs with 
+                | [] -> new_gr
+                | arc :: rest -> 
+                    match (capacity gr_initial arc.tgt arc.src) with
+                        | Some capacity -> 
+                            Printf.printf "\nCapacity found for arc from %d to %d: %d\n, changes applied with label %d" arc.tgt arc.src capacity arc.lbl;
+                            let flot = arc.lbl in
+                            if capacity < flot then 
+                            transform (new_arc new_gr {src = arc.tgt; tgt = arc.src; lbl = (capacity,capacity)}) node rest
+                        else transform (new_arc new_gr {src = arc.tgt; tgt = arc.src; lbl = (flot,capacity)}) node rest
+                        | None -> match (capacity gr_initial arc.src arc.tgt) with
+                                | None -> 
+                                    Printf.printf "\nNo capacity found for arc from %d to %d, no changes applied\n" arc.src arc.tgt;
+                                    transform new_gr node rest
+                                | Some capacity -> 
+                                    Printf.printf "\nCapacity found for arc from %d to %d: %d\n, changes applied" arc.src arc.tgt capacity;
+                                    match (find_arc new_gr arc.src arc.tgt) with 
+                                        | None ->  transform (new_arc new_gr {src = arc.src; tgt = arc.tgt; lbl = (0,capacity)}) node rest
+                                        | Some _ -> transform new_gr node rest
+        in
+        transform new_gr node (out_arcs final_graph node)
     in 
-    let rec find_path_to_t gr node edge_path = 
-        match (find_t (out_arcs gr node)) with 
-            | Some edge -> Some (edge :: edge_path)
-            | None -> match (out_arcs gr node) with 
-               | edge :: rest -> essayer de penser autrement on tourne en rond la*)
+    n_fold gr_initial aux new_graph
 
 
-    (* !!! commencer avec un graphe residuel de flots = capacités (avec réseau de flots f(u,v)=0)*)
-    (* on travaille surtout sur le graph d'écart *)
-    (* être capable de trouver une chemin (avec une fonction) entre source et puit dans le graphe résiduel: 
 
-    étapes de construction de l'algo FF : 
-    - fonction qui trouve un chemin de s vers t dans n'importe quel graphe (gr ou rzo flot) et qui renvoie la capacité min des tuyaux empruntés
-    - un nouveau type ou structure ? qui permette de représenter le flot (initié à 0 dans rzo) -> ou  alors créer un graphe nul résiduel avec les même sommets 
-    - algo qui cherche un chemin depuis le puit jusqu'a la source en prenant en compte les capacités des arcs ( -> fonction pour trouver le min de capacité pendant le chemin)
-    - graphe résiduel : 
-        1) dès qu'un chemin entre u et v trouvé avec flot f(u,v) -> on rajoute un arc de v vers u de f(u,v) et on rajoute un arc de u vers v avec c(u,v)-f(u,v)
-        2) à partir du graphe résiduel, trouver un chemin de s à t avec minc = min{c(u,v)} (pour tous les u v par lesquels on passe)
-        [3) appliquer le +minc à tous les flots du réseau de flot f(u,v) concernés par le chemin (et -minc si le flot va de v vers u)] -> pas nécessaire de travailler sur le rzo
-        4) réitérer jusquèa trouver le flot max (en changeant gr puis rzo) sur UN AUTRE CHEMIN (comment mémoriser les chemins emprunté ? avec une liste)
-    - une manière de s'assurer que l'algo s'arrête (qu'on a atteint le flot max : tant qu'il existe un chemin dans le graphe résiduel -> avec une capacité de st coupe 
-    (apparaît quand plus de chemins de s vers t dans gr) avec goulot d'étranglement = au flot sur lequel on s'arrête -> à faire si on a le temps pour plus de points)
+(*****************************************************************************)
 
-   *)
+(* FONCTIONS PRINCIPALES : FOLD-FULKERSON*)
+
+(* Algorithme de Ford-Fulkerson : renvoie un graphe en doubles flèches*)
+let ford_fulkerson gr_source id_source id_sink =
+  let rec aux gr_res =
+    match find_path gr_res [] id_source id_sink with
+    | None -> gr_res
+    | Some path ->
+        let edges_path = find_edge_path gr_res (Some path) in
+        let gr_res_updated = apply_changes gr_res edges_path in
+        aux gr_res_updated
+  in
+  aux gr_source  
+
+
+(* Fonction de calcul du flot maximum d'un graphe orienté*)
+let flot_max gr_initial gr_final id_sink =
+    match (weird_sink gr_initial id_sink) with 
+        | None -> sum 0 (out_arcs gr_final id_sink)
+        | Some flot_initial -> (sum 0 (out_arcs gr_final id_sink)) - flot_initial
+
+(* Fonction qui renvoie la capacité de la ST coupe *)
+let flot_min gr_initial gr_final id_source = coupe_min gr_initial (st_coupe gr_final id_source) [] 0
